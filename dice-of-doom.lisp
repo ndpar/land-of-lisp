@@ -6,13 +6,12 @@
 
 (defparameter *num-players* 2)
 (defparameter *max-dice* 3)
-(defparameter *board-size* 2)
+(defparameter *board-size* 3)
 (defparameter *board-hexnum* (* *board-size* *board-size*))
 
 (defun board-array (lst)
   (make-array *board-hexnum* :initial-contents lst))
 
-;; #((0 2) (1 2) (0 2) (0 1))
 (defun gen-board ()
   (board-array (loop for n below *board-hexnum*
                      collect (list (random *num-players*)
@@ -31,14 +30,6 @@
                         do (format t "~a-~a " (player-letter (first hex))
                                               (second hex))))))
 
-;; (game-tree #((0 1) (1 1) (0 2) (1 1)) 0 0 t) =>
-;; (0
-;;  #((0 1) (1 1) (0 2) (1 1))
-;;  (((2 3) (0
-;;            #((0 1) (1 1) (0 1) (0 1))
-;;            ((NIL (1
-;;                    #((0 1) (1 1) (0 1) (0 1))
-;;                    NIL)))))))
 (defun game-tree (board player spare-dice first-move)
   (list player
         board
@@ -88,7 +79,6 @@
           when (and (>= p 0) (< p *board-hexnum*))
           collect p)))
 
-;; (board-attack #((0 3) (0 3) (1 3) (1 1)) 0 1 3 3) => #((0 3) (0 1) (1 3) (0 2))
 (defun board-attack (board player src dst dice)
   (board-array (loop for pos from 0
                      for hex across board
@@ -96,20 +86,22 @@
                                    ((eq pos dst) (list player (1- dice)))
                                    (t hex)))))
 
-;; (add-new-dice #((0 1) (1 3) (0 2) (1 1)) 0 2) => #((0 2) (1 3) (0 3) (1 1))
+; Tail-recursion example
 (defun add-new-dice (board player spare-dice)
-  (labels ((f (lst n)
-             (cond ((null lst) nil)
-                   ((zerop n) lst)
+  (labels ((f (lst n acc)
+             (cond ((zerop n) (append (reverse acc) lst))
+                   ((null lst) (reverse acc))
                    (t (let ((cur-player (caar lst))
                             (cur-dice (cadar lst)))
                         (if (and (eq cur-player player) (< cur-dice *max-dice*))
-                            (cons (list cur-player (1+ cur-dice)) 
-                                  (f (cdr lst) (1- n)))
-                            (cons (car lst) (f (cdr lst) n))))))))
-    (board-array (f (coerce board 'list) spare-dice))))
+                            (f (cdr lst)
+                               (1- n)
+                               (cons (list cur-player (1+ cur-dice)) acc))
+                            (f (cdr lst)
+                               n
+                               (cons (car lst) acc))))))))
+    (board-array (f (coerce board 'list) spare-dice ()))))
 
-;; (play-vs-human (game-tree (gen-board) 0 0 t))
 (defun play-vs-human (tree)
   (print-info tree)
   (if (caddr tree)
@@ -181,4 +173,28 @@
   (cond ((null (caddr tree)) (announce-winner (cadr tree)))
         ((zerop (car tree)) (play-vs-computer (handle-human tree)))
         (t (play-vs-computer (handle-computer tree)))))
+
+; Optimizations: memoization with closures
+
+(let ((old-neighbors (symbol-function 'neighbors))
+      (previous (make-hash-table)))
+  (defun neighbors (pos)
+    (or (gethash pos previous)
+      (setf (gethash pos previous) (funcall old-neighbors pos)))))
+
+(let ((old-game-tree (symbol-function 'game-tree))
+      (previous (make-hash-table :test #'equalp)))
+  (defun game-tree (&rest rest)
+    (or (gethash rest previous)
+      (setf (gethash rest previous) (apply old-game-tree rest)))))
+
+(let ((old-rate-position (symbol-function 'rate-position))
+      (previous (make-hash-table)))
+  (defun rate-position (tree player)
+    (let ((tab (gethash player previous)))
+      (unless tab
+        (setf tab (setf (gethash player previous) (make-hash-table))))
+      (or (gethash tree tab)
+        (setf (gethash tree tab)
+              (funcall old-rate-position tree player))))))
 
